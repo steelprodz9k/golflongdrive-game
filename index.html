@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Long Drive Simulator By Will Peterson</title>
+<title>INSANE Long Drive Simulator</title>
 <style>
 body { margin:0; overflow:hidden; background:#87CEEB; font-family:Arial; }
 #ui {
@@ -44,7 +44,7 @@ Power
 
 <script>
 
-// ================= BASIC SETUP =================
+// ================= BASIC =================
 
 let scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x87CEEB, 800, 3000);
@@ -52,96 +52,91 @@ scene.fog = new THREE.Fog(0x87CEEB, 800, 3000);
 let camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 5000);
 let renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth, innerHeight);
-
-// COLOR FIX (IMPORTANT)
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.2;
 renderer.setClearColor(0x87CEEB);
-
 document.body.appendChild(renderer.domElement);
 
-// ================= SKY DOME =================
+// ================= SKY =================
 
 let skyGeo = new THREE.SphereGeometry(4000, 64, 64);
-let skyMat = new THREE.ShaderMaterial({
-  side: THREE.BackSide,
-  uniforms: {
-    topColor: { value: new THREE.Color(0x4da6ff) },
-    bottomColor: { value: new THREE.Color(0xffffff) },
-    offset: { value: 400 },
-    exponent: { value: 0.6 }
-  },
-  vertexShader: `
-    varying vec3 vWorldPosition;
-    void main() {
-      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-      vWorldPosition = worldPosition.xyz;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform vec3 topColor;
-    uniform vec3 bottomColor;
-    uniform float offset;
-    uniform float exponent;
-    varying vec3 vWorldPosition;
-    void main() {
-      float h = normalize(vWorldPosition + offset).y;
-      gl_FragColor = vec4(mix(bottomColor, topColor, pow(max(h,0.0), exponent)), 1.0);
-    }
-  `
-});
+let skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide });
 scene.add(new THREE.Mesh(skyGeo, skyMat));
 
 // ================= LIGHTING =================
 
 scene.add(new THREE.HemisphereLight(0xb1e1ff, 0x444422, 0.8));
-
 let sun = new THREE.DirectionalLight(0xffffff, 2);
 sun.position.set(300, 500, 200);
-sun.castShadow = true;
 scene.add(sun);
 
 // ================= TERRAIN =================
 
-let terrainGeo = new THREE.PlaneGeometry(2000,2000,200,200);
+let terrainSize = 2000;
+let terrainGeo = new THREE.PlaneGeometry(terrainSize,terrainSize,200,200);
 terrainGeo.rotateX(-Math.PI/2);
+
+function getTerrainHeight(x,z){
+  return Math.sin(x*0.01)*10 + Math.cos(z*0.01)*10;
+}
 
 for(let i=0;i<terrainGeo.attributes.position.count;i++){
   let x = terrainGeo.attributes.position.getX(i);
   let z = terrainGeo.attributes.position.getZ(i);
-  let y = Math.sin(x*0.01)*10 + Math.cos(z*0.01)*10;
-  terrainGeo.attributes.position.setY(i,y);
+  terrainGeo.attributes.position.setY(i,getTerrainHeight(x,z));
 }
 terrainGeo.computeVertexNormals();
 
 let terrain = new THREE.Mesh(
   terrainGeo,
-  new THREE.MeshStandardMaterial({
-    color:0x2f7d32,
-    roughness:0.95,
-    metalness:0
-  })
+  new THREE.MeshStandardMaterial({color:0x2f7d32, roughness:0.95})
 );
-terrain.receiveShadow = true;
 scene.add(terrain);
+
+// ================= FLAGS =================
+
+function createFlag(distance,color){
+  let group = new THREE.Group();
+
+  let pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2,0.2,20,8),
+    new THREE.MeshStandardMaterial({color:0xffffff})
+  );
+  pole.position.y = 10;
+  group.add(pole);
+
+  let flag = new THREE.Mesh(
+    new THREE.PlaneGeometry(10,5),
+    new THREE.MeshStandardMaterial({color:color, side:THREE.DoubleSide})
+  );
+  flag.position.set(5,17,0);
+  group.add(flag);
+
+  group.position.set(0,getTerrainHeight(0,-distance),-distance);
+  scene.add(group);
+}
+
+createFlag(100,0xff0000);
+createFlag(200,0x0000ff);
+createFlag(300,0xffff00);
+createFlag(400,0xff00ff);
 
 // ================= BALL =================
 
 let ball = new THREE.Mesh(
-  new THREE.SphereGeometry(0.5,32,32),
+  new THREE.SphereGeometry(0.7,32,32),
   new THREE.MeshStandardMaterial({color:0xffffff})
 );
-ball.castShadow = true;
-ball.position.set(0,5,0);
+ball.position.set(0,20,0);
 scene.add(ball);
 
-// ================= GAME VARIABLES =================
+// ================= GAME =================
 
 let velocity = new THREE.Vector3();
-let gravity = -30;
+let gravity = -40;
 let wind = (Math.random()-0.5)*8;
+let rolling = false;
 
 let clubs = {
   Driver:{power:120, loft:0.6},
@@ -186,6 +181,7 @@ document.addEventListener("keyup", e=>{
 
 function shoot(){
   launched=true;
+  rolling=false;
 
   let club=clubs[currentClub];
   let strength=power*club.power;
@@ -201,9 +197,10 @@ function shoot(){
 // ================= RESET =================
 
 function resetGame(){
-  ball.position.set(0,5,0);
+  ball.position.set(0,20,0);
   velocity.set(0,0,0);
   launched=false;
+  rolling=false;
   power=0;
   wind=(Math.random()-0.5)*8;
   updateUI();
@@ -212,7 +209,7 @@ function resetGame(){
 
 // ================= CAMERA =================
 
-camera.position.set(0,25,60);
+camera.position.set(0,40,100);
 
 // ================= LOOP =================
 
@@ -230,33 +227,48 @@ function animate(){
   }
 
   if(launched){
-    velocity.y+=gravity*delta;
-    velocity.x+=wind*delta;
+
+    if(!rolling){
+      velocity.y+=gravity*delta;
+      velocity.x+=wind*delta;
+    }
 
     ball.position.add(velocity.clone().multiplyScalar(delta));
+
+    let groundHeight = getTerrainHeight(ball.position.x,ball.position.z)+0.7;
+
+    if(ball.position.y<=groundHeight){
+      ball.position.y=groundHeight;
+      velocity.y=0;
+      rolling=true;
+    }
+
+    if(rolling){
+      velocity.multiplyScalar(0.98);
+
+      // downhill roll
+      let slopeX = getTerrainHeight(ball.position.x+1,ball.position.z) - groundHeight;
+      let slopeZ = getTerrainHeight(ball.position.x,ball.position.z+1) - groundHeight;
+
+      velocity.x += slopeX*5*delta;
+      velocity.z += slopeZ*5*delta;
+
+      if(velocity.length()<0.5){
+        launched=false;
+        let dist=Math.sqrt(ball.position.x**2+ball.position.z**2).toFixed(1);
+        document.getElementById("info").innerText="Distance: "+dist+" m";
+        setTimeout(resetGame,5000);
+      }
+    }
 
     camera.position.lerp(
       new THREE.Vector3(
         ball.position.x,
-        ball.position.y+30,
-        ball.position.z+60
+        ball.position.y+40,
+        ball.position.z+100
       ),0.05
     );
     camera.lookAt(ball.position);
-
-    if(ball.position.y<=2){
-      ball.position.y=2;
-      launched=false;
-
-      let dist=Math.sqrt(
-        ball.position.x**2+
-        ball.position.z**2
-      ).toFixed(1);
-
-      document.getElementById("info").innerText="Distance: "+dist+" m";
-
-      setTimeout(resetGame,5000);
-    }
   }
 
   renderer.render(scene,camera);
