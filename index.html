@@ -2,187 +2,250 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Ultimate 3D Long Drive</title>
+<title>INSANE Long Drive Simulator</title>
 <style>
-body { margin:0; overflow:hidden; background:#87CEEB; font-family:Arial; }
+body { margin:0; overflow:hidden; background:black; font-family:Arial; }
 #ui {
   position:absolute;
   bottom:20px;
   left:50%;
   transform:translateX(-50%);
-  width:400px;
+  width:500px;
   text-align:center;
   color:white;
 }
-#powerContainer {
+.barContainer {
   width:100%;
-  height:20px;
-  background:#333;
+  height:18px;
+  background:#222;
   border-radius:10px;
   overflow:hidden;
-  margin-top:8px;
+  margin-top:5px;
 }
-#powerBar { height:100%; width:0%; background:lime; }
-#distance { margin-top:8px; font-size:20px; }
+.bar { height:100%; width:0%; }
+#powerBar { background:linear-gradient(to right,red,yellow,lime); }
+#accuracyBar { background:cyan; }
+#info { margin-top:8px; font-size:18px; }
+#club { position:absolute; top:20px; left:20px; color:white; }
+#wind { position:absolute; top:20px; right:20px; color:white; }
 </style>
 </head>
 <body>
 
+<div id="club">Club: Driver (1-3 to change)</div>
+<div id="wind">Wind: 0 m/s</div>
+
 <div id="ui">
-Hold SPACE to swing • Arrow Keys to Aim
-<div id="powerContainer"><div id="powerBar"></div></div>
-<div id="distance">Distance: 0m</div>
+Power
+<div class="barContainer"><div id="powerBar" class="bar"></div></div>
+Accuracy (release timing)
+<div class="barContainer"><div id="accuracyBar" class="bar"></div></div>
+<div id="info">Hold SPACE to swing</div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128/examples/js/loaders/GLTFLoader.js"></script>
 
 <script>
 
+// ================= SCENE =================
+
 let scene = new THREE.Scene();
-let camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 2000);
+scene.fog = new THREE.Fog(0x87ceeb, 200, 1200);
+
+let camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 5000);
 let renderer = new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
-// Lighting
-scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1.2));
-let dirLight = new THREE.DirectionalLight(0xffffff,1);
-dirLight.position.set(50,100,50);
-scene.add(dirLight);
+// ================= LIGHTING =================
 
-// TERRAIN (HILLS)
-let terrainGeo = new THREE.PlaneGeometry(1000,1000,100,100);
+scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1.2));
+
+let sun = new THREE.DirectionalLight(0xffffff,1.5);
+sun.position.set(200,400,200);
+sun.castShadow = true;
+scene.add(sun);
+
+// ================= TERRAIN =================
+
+let terrainGeo = new THREE.PlaneGeometry(2000,2000,200,200);
 terrainGeo.rotateX(-Math.PI/2);
 
 for(let i=0;i<terrainGeo.attributes.position.count;i++){
-  let y = Math.sin(i/5)*2 + Math.random()*1.5;
+  let x = terrainGeo.attributes.position.getX(i);
+  let z = terrainGeo.attributes.position.getZ(i);
+  let y = Math.sin(x*0.01)*10 + Math.cos(z*0.01)*10 + Math.random()*2;
   terrainGeo.attributes.position.setY(i,y);
 }
 terrainGeo.computeVertexNormals();
 
 let terrain = new THREE.Mesh(
   terrainGeo,
-  new THREE.MeshStandardMaterial({color:0x2e8b57})
+  new THREE.MeshStandardMaterial({color:0x2e8b57, roughness:1})
 );
+terrain.receiveShadow = true;
 scene.add(terrain);
 
-// BALL
+// ================= BALL =================
+
 let ball = new THREE.Mesh(
-  new THREE.SphereGeometry(0.4,32,32),
-  new THREE.MeshStandardMaterial({color:0xffffff})
+  new THREE.SphereGeometry(0.5,32,32),
+  new THREE.MeshStandardMaterial({color:0xffffff, metalness:0.2, roughness:0.3})
 );
-ball.position.set(0,1,0);
+ball.castShadow = true;
+ball.position.set(0,5,0);
 scene.add(ball);
 
-// REAL GOLFER MODEL
-let golfer, mixer;
-let loader = new THREE.GLTFLoader();
+// ================= GAME SYSTEMS =================
 
-loader.load(
-  "https://threejs.org/examples/models/gltf/Soldier.glb",
-  function(gltf){
-    golfer = gltf.scene;
-    golfer.scale.set(1.5,1.5,1.5);
-    golfer.position.set(0,0,4);
-    scene.add(golfer);
+let velocity = new THREE.Vector3();
+let spin = new THREE.Vector3();
+let gravity = -25;
+let wind = (Math.random()-0.5)*10;
 
-    mixer = new THREE.AnimationMixer(golfer);
-    let action = mixer.clipAction(gltf.animations[0]);
-    action.play();
-  }
-);
+document.getElementById("wind").innerText =
+"Wind: " + wind.toFixed(1) + " m/s";
 
-// BETTER CLUB MODEL
-let club = new THREE.Mesh(
-  new THREE.CylinderGeometry(0.05,0.05,3,16),
-  new THREE.MeshStandardMaterial({color:0x333333, metalness:0.8, roughness:0.2})
-);
-club.position.set(0.8,2,3);
-club.rotation.z = Math.PI/2;
-scene.add(club);
+let clubs = {
+  Driver:{power:110, loft:0.6},
+  Wood:{power:95, loft:0.7},
+  Iron:{power:80, loft:0.9}
+};
+let currentClub = "Driver";
 
-// Camera
-camera.position.set(0,6,15);
+document.getElementById("club").innerText =
+"Club: " + currentClub + " (1-3 to change)";
 
-let velocity = {x:0,y:0,z:0};
-let gravity = -15;
-let clock = new THREE.Clock();
+document.addEventListener("keydown", e=>{
+  if(e.key==="1") currentClub="Driver";
+  if(e.key==="2") currentClub="Wood";
+  if(e.key==="3") currentClub="Iron";
+  document.getElementById("club").innerText =
+  "Club: " + currentClub + " (1-3 to change)";
+});
+
+// ================= POWER + ACCURACY =================
 
 let charging=false;
 let power=0;
+let accuracy=0;
 let powerDir=1;
-let launched=false;
-let aimAngle=0;
 
-const powerBar=document.getElementById("powerBar");
-const distanceUI=document.getElementById("distance");
-
-// Controls
 document.addEventListener("keydown", e=>{
-  if(e.code==="Space" && !launched) charging=true;
-  if(e.code==="ArrowLeft") aimAngle+=2;
-  if(e.code==="ArrowRight") aimAngle-=2;
-});
-document.addEventListener("keyup", e=>{
-  if(e.code==="Space" && charging && !launched){
-    charging=false;
-    launch();
+  if(e.code==="Space" && !launched){
+    charging=true;
   }
 });
 
-function launch(){
-  launched=true;
-  let strength=power*80;
-  let rad=THREE.MathUtils.degToRad(aimAngle);
+document.addEventListener("keyup", e=>{
+  if(e.code==="Space" && charging && !launched){
+    charging=false;
+    shoot();
+  }
+});
 
-  velocity.z=-Math.cos(rad)*strength;
-  velocity.x=Math.sin(rad)*strength;
-  velocity.y=strength*0.7;
+let launched=false;
+let aimAngle=0;
+
+document.addEventListener("keydown", e=>{
+  if(e.code==="ArrowLeft") aimAngle+=2;
+  if(e.code==="ArrowRight") aimAngle-=2;
+});
+
+// ================= SHOOT =================
+
+function shoot(){
+  launched=true;
+
+  let club = clubs[currentClub];
+
+  let perfectZone = 0.8;
+  let timingError = Math.abs(power-perfectZone);
+
+  let accuracyFactor = 1 - timingError;
+  let strength = power * club.power;
+
+  let rad = THREE.MathUtils.degToRad(aimAngle);
+
+  velocity.x = Math.sin(rad)*strength;
+  velocity.z = -Math.cos(rad)*strength;
+  velocity.y = strength*club.loft;
+
+  spin.y = (Math.random()-0.5)*timingError*20;
+
+  document.getElementById("info").innerText =
+  accuracyFactor>0.9 ? "PERFECT!" :
+  accuracyFactor>0.7 ? "Great!" :
+  "Slice/Hook!";
 }
+
+// ================= CAMERA =================
+
+camera.position.set(0,20,40);
+
+// ================= RESET =================
 
 function resetGame(){
-  ball.position.set(0,1,0);
-  velocity={x:0,y:0,z:0};
+  ball.position.set(0,5,0);
+  velocity.set(0,0,0);
+  spin.set(0,0,0);
   launched=false;
   power=0;
-  aimAngle=0;
-  distanceUI.innerHTML="Distance: 0m";
+  wind=(Math.random()-0.5)*10;
+  document.getElementById("wind").innerText =
+  "Wind: " + wind.toFixed(1) + " m/s";
+  document.getElementById("info").innerText =
+  "Hold SPACE to swing";
 }
+
+// ================= LOOP =================
+
+let clock = new THREE.Clock();
 
 function animate(){
   requestAnimationFrame(animate);
-  let delta=clock.getDelta();
-
-  if(mixer) mixer.update(delta);
+  let delta = clock.getDelta();
 
   if(charging){
     power+=powerDir*delta;
     if(power>=1){power=1;powerDir=-1;}
     if(power<=0){power=0;powerDir=1;}
-    powerBar.style.width=(power*100)+"%";
+    document.getElementById("powerBar").style.width=(power*100)+"%";
+    document.getElementById("accuracyBar").style.width=(power*100)+"%";
   }
 
   if(launched){
+
     velocity.y+=gravity*delta;
+    velocity.x+=wind*delta;
 
-    ball.position.x+=velocity.x*delta;
-    ball.position.y+=velocity.y*delta;
-    ball.position.z+=velocity.z*delta;
+    velocity.add(spin.clone().multiplyScalar(delta));
 
-    camera.position.x=ball.position.x;
-    camera.position.z=ball.position.z+20;
-    camera.position.y=ball.position.y+8;
+    ball.position.add(velocity.clone().multiplyScalar(delta));
+
+    camera.position.lerp(
+      new THREE.Vector3(
+        ball.position.x,
+        ball.position.y+20,
+        ball.position.z+40
+      ),0.05
+    );
     camera.lookAt(ball.position);
 
-    if(ball.position.y<=1){
-      ball.position.y=1;
+    if(ball.position.y<=2){
+      ball.position.y=2;
       launched=false;
 
-      let dist=Math.sqrt(ball.position.x**2+ball.position.z**2).toFixed(1);
-      distanceUI.innerHTML="Distance: "+dist+"m";
+      let dist = Math.sqrt(
+        ball.position.x**2 +
+        ball.position.z**2
+      ).toFixed(1);
 
-      setTimeout(resetGame,5000); // FULL RESET AFTER 5s
+      document.getElementById("info").innerText =
+      "Distance: "+dist+" m";
+
+      setTimeout(resetGame,5000);
     }
   }
 
