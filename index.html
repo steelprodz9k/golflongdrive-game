@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Golf Long Drive Game</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #87CEEB; font-family: Arial; }
+    #ui {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 400px;
+      text-align: center;
+      color: white;
+    }
+    #powerContainer {
+      width: 100%;
+      height: 25px;
+      background: #333;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    #powerBar {
+      height: 100%;
+      width: 0%;
+      background: red;
+    }
+    #sweetSpot {
+      position: absolute;
+      bottom: 55px;
+      left: 50%;
+      width: 60px;
+      height: 25px;
+      background: green;
+      transform: translateX(-50%);
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    #distance {
+      font-size: 22px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="ui">
+  <div>Hold SPACE and release in the green zone!</div>
+  <div id="powerContainer">
+    <div id="powerBar"></div>
+  </div>
+  <div id="distance">Distance: 0m</div>
+</div>
+
+<div id="sweetSpot"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+
+let scene = new THREE.Scene();
+let camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+let renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Lighting
+let light = new THREE.DirectionalLight(0xffffff, 1);
+light.position.set(10, 20, 10);
+scene.add(light);
+
+// Ground
+let groundGeometry = new THREE.PlaneGeometry(500, 500);
+let groundMaterial = new THREE.MeshPhongMaterial({color: 0x228B22});
+let ground = new THREE.Mesh(groundGeometry, groundMaterial);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+
+// Ball
+let ballGeometry = new THREE.SphereGeometry(0.5, 32, 32);
+let ballMaterial = new THREE.MeshPhongMaterial({color: 0xffffff});
+let ball = new THREE.Mesh(ballGeometry, ballMaterial);
+ball.position.y = 0.5;
+scene.add(ball);
+
+camera.position.set(0, 5, 10);
+
+let velocity = {x:0, y:0, z:0};
+let gravity = -9.8;
+let clock = new THREE.Clock();
+
+let charging = false;
+let power = 0;
+let powerDirection = 1;
+let launched = false;
+
+const powerBar = document.getElementById("powerBar");
+const distanceUI = document.getElementById("distance");
+
+document.addEventListener("keydown", e => {
+  if (e.code === "Space" && !launched) {
+    charging = true;
+  }
+});
+
+document.addEventListener("keyup", e => {
+  if (e.code === "Space" && charging && !launched) {
+    launchBall();
+    charging = false;
+  }
+});
+
+function launchBall() {
+  launched = true;
+
+  let accuracy = 1 - Math.abs(power - 0.75); // sweet spot at 75%
+  let strength = power * 50;
+
+  velocity.z = -strength * accuracy;
+  velocity.y = strength * 0.6 * accuracy;
+}
+
+function resetBall() {
+  ball.position.set(0,0.5,0);
+  velocity = {x:0,y:0,z:0};
+  launched = false;
+  power = 0;
+  distanceUI.innerHTML = "Distance: 0m";
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  let delta = clock.getDelta();
+
+  if (charging) {
+    power += powerDirection * delta;
+    if (power >= 1) { power = 1; powerDirection = -1; }
+    if (power <= 0) { power = 0; powerDirection = 1; }
+    powerBar.style.width = (power * 100) + "%";
+  }
+
+  if (launched) {
+    velocity.y += gravity * delta;
+    ball.position.y += velocity.y * delta;
+    ball.position.z += velocity.z * delta;
+
+    camera.position.z = ball.position.z + 10;
+    camera.position.y = ball.position.y + 5;
+    camera.lookAt(ball.position);
+
+    if (ball.position.y <= 0.5) {
+      ball.position.y = 0.5;
+      velocity = {x:0,y:0,z:0};
+      launched = false;
+
+      let distance = Math.abs(ball.position.z).toFixed(1);
+      distanceUI.innerHTML = "Distance: " + distance + "m";
+
+      setTimeout(resetBall, 3000);
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+animate();
+
+</script>
+</body>
+</html>
